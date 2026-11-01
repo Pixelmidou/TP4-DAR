@@ -7,47 +7,53 @@ import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 public class Client_4_3 {
-    private static final int SERVER_PORT = 1234;
-    private static final int BUFFER_SIZE = 1024;
-    private static final String JOIN_MESSAGE = "/join";
-    private static final String QUIT_MESSAGE = "/quit";
-
-    public static void main(String[] argv) throws Exception {
+    public static void main(String[] args) throws Exception {
         DatagramSocket socket = new DatagramSocket();
-        InetAddress serverAddress = InetAddress.getByName("localhost");
+        InetAddress server = InetAddress.getByName("localhost");
 
-        sendMessage(socket, serverAddress, JOIN_MESSAGE);
+        byte[] join = "/join".getBytes(StandardCharsets.UTF_8);
+        socket.send(new DatagramPacket(join, join.length, server, 1234));
 
-        Thread sendingThread = new Thread(
-                () -> sendMessages(socket, serverAddress),
-                "client-sending"
-        );
-        Thread receivingThread = new Thread(
-                () -> receiveMessages(socket),
-                "client-receiving"
-        );
+        Thread sendingThread = new Thread(new Runnable() {
+            public void run() {
+                sendMessages(socket, server);
+            }
+        });
 
-        receivingThread.start();
+        Thread receivingThread = new Thread(new Runnable() {
+            public void run() {
+                receiveMessages(socket);
+            }
+        });
+
         sendingThread.start();
+        receivingThread.start();
     }
 
-    private static void sendMessages(
+    public static void sendMessages(
             DatagramSocket socket,
-            InetAddress serverAddress
+            InetAddress server
     ) {
-        try (Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8)) {
+        try {
+            Scanner scanner = new Scanner(System.in);
             System.out.println("Connecte au serveur. Ecrivez vos messages :");
 
-            while (!socket.isClosed() && scanner.hasNextLine()) {
+            while (scanner.hasNextLine()) {
                 String message = scanner.nextLine().trim();
-                if (message.isEmpty()) {
-                    continue;
+
+                if (!message.isEmpty()) {
+                    byte[] data = message.getBytes(StandardCharsets.UTF_8);
+                    socket.send(new DatagramPacket(
+                            data,
+                            data.length,
+                            server,
+                            1234
+                    ));
                 }
 
-                sendMessage(socket, serverAddress, message);
-
-                if (message.equalsIgnoreCase(QUIT_MESSAGE)) {
+                if (message.equalsIgnoreCase("/quit")) {
                     socket.close();
+                    break;
                 }
             }
         } catch (Exception exception) {
@@ -57,35 +63,19 @@ public class Client_4_3 {
         }
     }
 
-    private static void sendMessage(
-            DatagramSocket socket,
-            InetAddress serverAddress,
-            String message
-    ) throws Exception {
-        byte[] data = message.getBytes(StandardCharsets.UTF_8);
-        DatagramPacket packet = new DatagramPacket(
-                data,
-                data.length,
-                serverAddress,
-                SERVER_PORT
-        );
-        socket.send(packet);
-    }
-
-    private static void receiveMessages(DatagramSocket socket) {
+    public static void receiveMessages(DatagramSocket socket) {
         try {
-            while (!socket.isClosed()) {
-                byte[] buffer = new byte[BUFFER_SIZE];
+            while (true) {
+                byte[] buffer = new byte[1024];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                String message = new String(
+                System.out.println(new String(
                         packet.getData(),
                         packet.getOffset(),
                         packet.getLength(),
                         StandardCharsets.UTF_8
-                );
-                System.out.println(message);
+                ));
             }
         } catch (Exception exception) {
             if (!socket.isClosed()) {

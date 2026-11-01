@@ -2,50 +2,56 @@ package serverPackage;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class Server_4_3 {
-    private static final int PORT = 1234;
-    private static final int BUFFER_SIZE = 1024;
-    private static final String JOIN_MESSAGE = "/join";
-    private static final String QUIT_MESSAGE = "/quit";
-
-    public static void main(String[] argv) throws Exception {
-        DatagramSocket socket = new DatagramSocket(PORT);
-        Set<Client> clients = ConcurrentHashMap.newKeySet();
+    public static void main(String[] args) throws Exception {
+        DatagramSocket socket = new DatagramSocket(1234);
+        List<InetSocketAddress> clients = new ArrayList<>();
 
         System.out.println("Lancement du serveur");
         System.out.println("Ecrivez un message pour le diffuser aux clients.");
 
-        Thread receivingThread = new Thread(
-                () -> receiveMessages(socket, clients),
-                "server-receiving"
-        );
-        Thread sendingThread = new Thread(
-                () -> sendMessages(socket, clients),
-                "server-sending"
-        );
+        Thread receivingThread = new Thread(new Runnable() {
+            public void run() {
+                receiveMessages(socket, clients);
+            }
+        });
+
+        Thread sendingThread = new Thread(new Runnable() {
+            public void run() {
+                sendMessages(socket, clients);
+            }
+        });
 
         receivingThread.start();
         sendingThread.start();
     }
 
-    private static void receiveMessages(
+    public static void receiveMessages(
             DatagramSocket socket,
-            Set<Client> clients
+            List<InetSocketAddress> clients
     ) {
         try {
-            while (!socket.isClosed()) {
-                byte[] buffer = new byte[BUFFER_SIZE];
+            while (true) {
+                byte[] buffer = new byte[1024];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                Client client = new Client(packet.getAddress(), packet.getPort());
-                clients.add(client);
+                InetSocketAddress client = new InetSocketAddress(
+                        packet.getAddress(),
+                        packet.getPort()
+                );
+
+                synchronized (clients) {
+                    if (!clients.contains(client)) {
+                        clients.add(client);
+                    }
+                }
 
                 String message = new String(
                         packet.getData(),
@@ -54,67 +60,70 @@ public class Server_4_3 {
                         StandardCharsets.UTF_8
                 );
 
-                if (message.equalsIgnoreCase(JOIN_MESSAGE)) {
+                if (message.equalsIgnoreCase("/join")) {
                     continue;
                 }
 
-                if (message.equalsIgnoreCase(QUIT_MESSAGE)) {
-                    clients.remove(client);
+                if (message.equalsIgnoreCase("/quit")) {
+                    synchronized (clients) {
+                        clients.remove(client);
+                    }
                     continue;
                 }
 
-                String broadcast = "Client " + client + " : " + message;
-                System.out.println(broadcast);
-                broadcast(socket, clients, broadcast);
+                String displayedMessage = "Client "
+                        + client.getAddress().getHostAddress()
+                        + ":"
+                        + client.getPort()
+                        + " : "
+                        + message;
+                System.out.println(displayedMessage);
+
+                byte[] data = displayedMessage.getBytes(StandardCharsets.UTF_8);
+                synchronized (clients) {
+                    for (InetSocketAddress destination : clients) {
+                        socket.send(new DatagramPacket(
+                                data,
+                                data.length,
+                                destination.getAddress(),
+                                destination.getPort()
+                        ));
+                    }
+                }
             }
         } catch (Exception exception) {
-            if (!socket.isClosed()) {
-                System.err.println("Erreur de reception : " + exception.getMessage());
-            }
+            System.err.println("Erreur de reception : " + exception.getMessage());
         }
     }
 
-    private static void sendMessages(
+    public static void sendMessages(
             DatagramSocket socket,
-            Set<Client> clients
+            List<InetSocketAddress> clients
     ) {
-        try (Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8)) {
-            while (!socket.isClosed() && scanner.hasNextLine()) {
+        try {
+            Scanner scanner = new Scanner(System.in);
+
+            while (scanner.hasNextLine()) {
                 String message = scanner.nextLine().trim();
+
                 if (!message.isEmpty()) {
-                    String broadcast = "Serveur : " + message;
-                    broadcast(socket, clients, broadcast);
+                    byte[] data = ("Serveur : " + message)
+                            .getBytes(StandardCharsets.UTF_8);
+
+                    synchronized (clients) {
+                        for (InetSocketAddress destination : clients) {
+                            socket.send(new DatagramPacket(
+                                    data,
+                                    data.length,
+                                    destination.getAddress(),
+                                    destination.getPort()
+                            ));
+                        }
+                    }
                 }
             }
         } catch (Exception exception) {
-            if (!socket.isClosed()) {
-                System.err.println("Erreur d'envoi : " + exception.getMessage());
-            }
-        }
-    }
-
-    private static void broadcast(
-            DatagramSocket socket,
-            Set<Client> clients,
-            String message
-    ) throws Exception {
-        byte[] data = message.getBytes(StandardCharsets.UTF_8);
-
-        for (Client client : clients) {
-            DatagramPacket packet = new DatagramPacket(
-                    data,
-                    data.length,
-                    client.address,
-                    client.port
-            );
-            socket.send(packet);
-        }
-    }
-
-    private record Client(InetAddress address, int port) {
-        @Override
-        public String toString() {
-            return address.getHostAddress() + ":" + port;
+            System.err.println("Erreur d'envoi : " + exception.getMessage());
         }
     }
 }
